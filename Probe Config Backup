@@ -1,0 +1,63 @@
+resp,rc = nimbus.request("hub", "gethubs")
+local hosts = {}
+local basedir = "/ProbeConfig/"
+
+--currentdate = os.date("%Y_%m_%d")
+
+for h,hinfo in pairs(resp.hublist) do                                                      -- Get all hubs
+
+   local args = pds.create()
+   pds.putInt(args, "detail", 1) 
+   sessionhandle = nimbus.session_open(hinfo.addr)
+   if sessionhandle ~= nil then   
+
+      local r_resp,rc = nimbus.session_request(sessionhandle, "getrobots", args, 300)      -- Pull robot list info
+      if rc == 0 then                                                                      -- Only proceed if hub query is successful
+         for r,rinfo in pairs(r_resp.robotlist) do                                         -- List all robots
+
+            print (rinfo.addr)
+            if rinfo.status ~= 2 then   
+                                                                                           -- If robot is down do not list probes
+               addressarray = split(rinfo.addr, "/")
+               origin = addressarray[2]
+               hostname = addressarray[3]
+               local probearray, rc = nimbus.request(rinfo.addr, "probe_list", "", 300)    -- List probes
+               if probearray ~= nil then
+
+                  for probelist_index, probelist_value in pairs(probearray) do     
+                     print (probelist_index)
+                     local robotdir = basedir .. hostname  
+                     os.execute("if not exist " .. robotdir .. " mkdir " .. robotdir)      -- Create a folder for each robot
+                     if not (probelist_index == "spooler" or probelist_index == "hdb") then
+                        if probelist_value.config ~= nil then                              -- Do not proceed if there is no config file
+
+                           local args2 = pds.create()  
+                           pds.putString(args2, "directory", probelist_value.workdir)
+                           pds.putString(args2, "file", probelist_value.config)                    
+                           pds.putInt(args2, "buffer_size", 1000000)
+                           local configfile, rc = nimbus.request(rinfo.addr, "text_file_get", args2) -- Read config file
+                           --print(rinfo.addr)                                      
+                           if rc == 0 then  
+                              local d_robot = "controller"
+                              local p_args = pds.create()
+                              pds.putString(p_args,"directory",robotdir)                   -- Where to write
+                              pds.putString(p_args,"file",probelist_value.config)          -- Cfg filename
+                              pds.putString(p_args,"file_contents", configfile.file_content) -- Config data
+                              nimbus.request(d_robot,"text_file_put",p_args)               -- Write to file
+                              pds.delete(p_args)
+                           else
+                              --print("Probe info Request for " .. origin.. "-" ..hostname.. " failed with error code: " ..rc)
+                           end --endif
+                        end --end if
+                     end --end if
+                  end   --end for
+               end --end if               
+            end --end if
+               --print("\n")
+         end --end for 
+      else
+        print("Error "..rc.." with request to: "..hinfo.addr)
+      end --end if
+   end --end if
+   nimbus.session_close(sessionhandle)   
+end --end for
